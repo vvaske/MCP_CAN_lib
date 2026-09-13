@@ -44,7 +44,18 @@
 /*
  *   Begin mt
  */
-#define TIMEOUTVALUE    2500                                           /* In Microseconds, May need changed depending on application and baud rate */
+#ifndef TIMEOUTVALUE
+#define TIMEOUTVALUE    2500UL                                        /* Wait for a free TX buffer, in microseconds */
+#endif
+#ifndef TX_TIMEOUTVALUE
+// At 50 kbit/s an 8-byte frame can exceed 2.5 ms with bit stuffing.
+// For slower bitrates, increase TX_TIMEOUTVALUE and ABORT_TIMEOUTVALUE
+// to allow a complete frame, including bit stuffing and arbitration delay.
+#define TX_TIMEOUTVALUE 5000UL                                        /* Wait for transmission; adjust for slower bitrates */
+#endif
+#ifndef ABORT_TIMEOUTVALUE
+#define ABORT_TIMEOUTVALUE 5000UL                                     /* Wait for all TX requests to drain */
+#endif
 #define MCP_SIDH        0
 #define MCP_SIDL        1
 #define MCP_EID8        2
@@ -251,9 +262,8 @@
 /*
  *  Speed 8M
  */
-#define MCP_8MHz_1000kBPS_CFG1 (0x00)  
-#define MCP_8MHz_1000kBPS_CFG2 (0xC0)  /* Enabled SAM bit     */
-#define MCP_8MHz_1000kBPS_CFG3 (0x80)  /* Sample point at 75% */
+// MCP2515 cannot support 1 Mbit/s with an 8 MHz oscillator:
+// the required four-TQ bit time cannot satisfy the minimum PS2 of two TQ.
 
 #define MCP_8MHz_500kBPS_CFG1 (0x00)
 #define MCP_8MHz_500kBPS_CFG2 (0xD1)   /* Enabled SAM bit     */
@@ -275,9 +285,9 @@
 #define MCP_8MHz_100kBPS_CFG2 (0xF6)   /* Enabled SAM bit     */
 #define MCP_8MHz_100kBPS_CFG3 (0x84)   /* Sample point at 75% */
 
-#define MCP_8MHz_80kBPS_CFG1 (0x84)    /* Increased SJW       */
+#define MCP_8MHz_80kBPS_CFG1 (0x44)    /* SJW = 2 TQ, <= PS2  */
 #define MCP_8MHz_80kBPS_CFG2 (0xD3)    /* Enabled SAM bit     */
-#define MCP_8MHz_80kBPS_CFG3 (0x81)    /* Sample point at 75% */
+#define MCP_8MHz_80kBPS_CFG3 (0x81)    /* Sample point at 80% */
 
 #define MCP_8MHz_50kBPS_CFG1 (0x84)    /* Increased SJW       */
 #define MCP_8MHz_50kBPS_CFG2 (0xE5)    /* Enabled SAM bit     */
@@ -306,25 +316,6 @@
 #define MCP_8MHz_5kBPS_CFG1 (0xA7)     /* Increased SJW       */
 #define MCP_8MHz_5kBPS_CFG2 (0xF6)     /* Enabled SAM bit     */
 #define MCP_8MHz_5kBPS_CFG3 (0x84)     /* Sample point at 75% */
-
-/*
-** Add 10MHz configurations in mcp_can_dfs.h
-*/
-#define MCP_10MHz_1000kBPS_CFG1 (0x00)
-#define MCP_10MHz_1000kBPS_CFG2 (0xC8)
-#define MCP_10MHz_1000kBPS_CFG3 (0x80)
-
-#define MCP_10MHz_500kBPS_CFG1 (0x40)
-#define MCP_10MHz_500kBPS_CFG2 (0xD9)
-#define MCP_10MHz_500kBPS_CFG3 (0x82)
-
-#define MCP_10MHz_250kBPS_CFG1 (0x41)
-#define MCP_10MHz_250kBPS_CFG2 (0xD9)
-#define MCP_10MHz_250kBPS_CFG3 (0x82)
-
-#define MCP_10MHz_125kBPS_CFG1 (0x43)
-#define MCP_10MHz_125kBPS_CFG2 (0xD9)
-#define MCP_10MHz_125kBPS_CFG3 (0x82)
 
 /*
  *  speed 16M
@@ -386,7 +377,7 @@
  */
 #define MCP_20MHz_1000kBPS_CFG1 (0x00)
 #define MCP_20MHz_1000kBPS_CFG2 (0xD9)
-#define MCP_20MHz_1000kBPS_CFG3 (0x82)     /* Sample point at 80% */
+#define MCP_20MHz_1000kBPS_CFG3 (0x82)     /* Sample point at 70% */
 
 #define MCP_20MHz_500kBPS_CFG1 (0x40)     /* Increased SJW       */
 #define MCP_20MHz_500kBPS_CFG2 (0xF6)
@@ -462,11 +453,14 @@
 #define MCP_20MHZ    0
 #define MCP_16MHZ    1
 #define MCP_8MHZ     2
-#define MCP_10MHZ     3
 #define MCP_CLOCK_SELECT 3
 #define MCP_CLKOUT_ENABLE 4
 
 
+// Supported combinations: 8 MHz, 5..500 kbit/s; 16 MHz, 5..1000 kbit/s
+// except 31.25 kbit/s; 20 MHz, 40..1000 kbit/s (listed rates only).
+// CAN_4K096BPS is retained for API compatibility but is not supported.
+// begin() rejects unsupported oscillator/bitrate combinations.
 #define CAN_4K096BPS 0
 #define CAN_5KBPS    1
 #define CAN_10KBPS   2

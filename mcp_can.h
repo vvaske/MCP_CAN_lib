@@ -27,6 +27,8 @@
 #include "mcp_can_dfs.h"
 #define MAX_CHAR_IN_MESSAGE 8
 
+// Calls on an instance must be serialized; the shared message state is not
+// safe for concurrent use from an interrupt and the main loop.
 class MCP_CAN
 {
     private:
@@ -40,7 +42,7 @@ class MCP_CAN
     INT8U   m_nfilhit;                                                  // The number of the filter that matched the message
     SPIClass *mcpSPI;                                                       // The SPI-Device used
     INT8U   MCPCS;                                                      // Chip Select pin number
-    INT8U   mcpMode;                                                    // Mode to return to after configurations are performed.
+    INT8U   mcpMode;                                                    // Last successfully selected mode, restored after configuration.
     
 
 /*********************************************************************************************************
@@ -109,25 +111,54 @@ class MCP_CAN
 public:
     MCP_CAN(INT8U _CS);
     MCP_CAN(SPIClass *_SPI, INT8U _CS);
+    // Leaves the controller in LOOPBACK on success. Unsupported clock/rate
+    // combinations (including 8 MHz / 1 Mbit/s) return CAN_FAILINIT.
     INT8U begin(INT8U idmodeset, INT8U speedset, INT8U clockset);       // Initialize controller parameters
+    // Standard masks/filters use (uint32_t(SID) << 16) | (uint32_t(data0) << 8) | data1,
+    // unlike sendMsgBuf() IDs. Example: SID 0x123 -> 0x01230000UL.
+    // The low 16 bits support filtering the first two standard data bytes.
+    // Extended masks/filters use a 29-bit value. In overloads without ext,
+    // bit 31 selects extended format. Mask indices: 0..1; filters: 0..5.
     INT8U init_Mask(INT8U num, INT8U ext, INT32U ulData);               // Initialize Mask(s)
     INT8U init_Mask(INT8U num, INT32U ulData);                          // Initialize Mask(s)
     INT8U init_Filt(INT8U num, INT8U ext, INT32U ulData);               // Initialize Filter(s)
     INT8U init_Filt(INT8U num, INT32U ulData);                          // Initialize Filter(s)
     void setSleepWakeup(INT8U enable);                                  // Enable or disable the wake up interrupt (If disabled the MCP2515 will not be woken up by CAN bus activity)
+    // Accepts MCP_NORMAL, MCP_SLEEP, MCP_LOOPBACK, MCP_LISTENONLY, MODE_CONFIG.
+    // Invalid values return MCP2515_FAIL before SPI access; the cached mode
+    // changes only on success.
+    // A transition can wait up to 200 ms; waking may require two transitions.
     INT8U setMode(INT8U opMode);                                        // Set operational mode
+    // len must be 0..8; buf may be null only for len == 0. Use an 11-bit
+    // standard or 29-bit extended ID and ext=0/1. The overload without ext
+    // uses ID bit 31 for extended format and bit 30 for a remote request.
+    // These calls block until completion or a deadline. Adjust TX/abort
+    // timeouts for slow bitrates (see mcp_can_dfs.h).
+    // CAN_OK requires TXnIF success, not an application-level acknowledgement.
+    // Timeout statuses guarantee no pending TX requests remain, but a frame
+    // may have finished during abort. CAN_CTRLERROR requires explicit
+    // abortTX()/controller recovery before another send attempt.
     INT8U sendMsgBuf(INT32U id, INT8U ext, INT8U len, INT8U *buf);      // Send message to transmit buffer
     INT8U sendMsgBuf(INT32U id, INT8U len, INT8U *buf);                 // Send message to transmit buffer
+    // Output pointers must be valid and buf must hold 8 bytes. Read only *len
+    // bytes after CAN_OK; CAN_NOMSG leaves outputs unchanged. RX DLC is capped
+    // at 8. The ext overload returns a raw ID and does not expose RTR.
+    // The other overload returns extended/RTR in ID bits 31/30 respectively;
+    // remote frames contain no payload regardless of their requested DLC.
     INT8U readMsgBuf(INT32U *id, INT8U *ext, INT8U *len, INT8U *buf);   // Read message from receive buffer
     INT8U readMsgBuf(INT32U *id, INT8U *len, INT8U *buf);               // Read message from receive buffer
     INT8U checkReceive(void);                                           // Check for received data
+    // checkError() reports EFLG & 0xF8. Use getError() to inspect all EFLG
+    // bits, including EWARN/RXWAR/TXWAR warnings.
     INT8U checkError(void);                                             // Check for errors
     INT8U getError(void);                                               // Check for errors
+    // Clears only RX0OVR/RX1OVR; does not flush RX buffers or reset the controller.
+    void resetOverflowErrors(void);                                     // Reset overflow error bits
     INT8U errorCountRX(void);                                           // Get error count
     INT8U errorCountTX(void);                                           // Get error count
     INT8U enOneShotTX(void);                                            // Enable one-shot transmission
     INT8U disOneShotTX(void);                                           // Disable one-shot transmission
-    INT8U abortTX(void);                                                // Abort queued transmission(s)
+    INT8U abortTX(void);                                                // CAN_OK only after all TXREQ clear and ABAT cleared
     INT8U setGPO(INT8U data);                                           // Sets GPO
     INT8U getGPI(void);                                                 // Reads GPI
 };
